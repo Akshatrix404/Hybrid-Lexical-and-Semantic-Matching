@@ -336,7 +336,6 @@ function LoginPage() {
             <line x1="18" y1="18" x2="25" y2="25" stroke="#00f5d4" strokeWidth="2.5" strokeLinecap="round"/>
           </svg>
           <span style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 800, letterSpacing: '-0.02em' }}>SearchLens</span>
-          <span className="tag tag-cyan">v2.4</span>
         </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
           <span className="tag tag-cyan" style={{ fontSize: 9 }}>Hybrid Search</span>
@@ -1593,7 +1592,7 @@ function Landing() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <svg width="26" height="26" viewBox="0 0 28 28" fill="none"><circle cx="12" cy="12" r="8" stroke="#00f5d4" strokeWidth="2"/><line x1="18" y1="18" x2="25" y2="25" stroke="#00f5d4" strokeWidth="2.5" strokeLinecap="round"/><circle cx="12" cy="12" r="3" fill="rgba(0,245,212,0.3)"/></svg>
           <span style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 800, letterSpacing: '-0.02em' }}>SearchLens</span>
-          <span className="tag tag-cyan">v2.4</span>
+          
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           {FEATURES.map(f => (
@@ -1620,7 +1619,7 @@ function Landing() {
             <span className="tag tag-green">Real PC IoT Fleet</span>
           </div>
           <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(44px,5.5vw,80px)', lineHeight: 1.05, letterSpacing: '-0.03em', marginBottom: 20 }}>
-            Four Intelligent Systems.<br /><span style={{ color: 'var(--cyan)' }}>One Platform.</span>
+          Hybrid Lexical and Semantic Matching<br /><span style={{ color: 'var(--cyan)' }}></span>
           </h1>
           <p style={{ fontSize: 15, color: 'var(--fg2)', lineHeight: 1.7, maxWidth: 600, margin: '0 auto 32px' }}>
             Real PC hardware as an IoT device · Live CPU/memory anomaly detection · AI-powered search · ATS resume analysis. All running live from <strong style={{ color: 'var(--cyan)' }}>your actual machine</strong>.
@@ -1633,24 +1632,7 @@ function Landing() {
           </div>
         </div>
 
-        {/* New v2.4 callout */}
-        <div style={{ background: 'rgba(0,245,212,0.04)', border: '1px solid rgba(0,245,212,0.15)', borderRadius: 10, padding: '20px 28px', marginBottom: 32, display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
-          <div style={{ fontSize: 32 }}>🚀</div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700, color: 'var(--cyan)', marginBottom: 4 }}>NEW in v2.4 — Full Feature Suite</div>
-            <div style={{ fontSize: 13, color: 'var(--fg2)', lineHeight: 1.6 }}>
-              Search now has <strong style={{ color: 'var(--cyan)' }}>sort toggles</strong>, <strong style={{ color: 'var(--cyan)' }}>JSON export</strong>, <strong style={{ color: 'var(--amber)' }}>AI query intelligence</strong>, and <strong style={{ color: 'var(--amber)' }}>AI text correction</strong>. Resume analyzer adds <strong style={{ color: 'var(--magenta)' }}>drag & drop</strong>, <strong style={{ color: 'var(--magenta)' }}>Languages section</strong>, <strong style={{ color: 'var(--magenta)' }}>entity extraction UI</strong>, <strong style={{ color: 'var(--magenta)' }}>AI section rewriter</strong>, and a full <strong style={{ color: 'var(--magenta)' }}>AI ATS report</strong>.
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <span className="tag tag-cyan">Sort Toggle</span>
-            <span className="tag tag-cyan">JSON Export</span>
-            <span className="tag tag-amber">AI Query Intel</span>
-            <span className="tag tag-magenta">AI Rewriter</span>
-            <span className="tag tag-green">Drag & Drop</span>
-          </div>
-        </div>
-
+       
         {/* Live Animated Demo */}
         <div style={{ marginBottom: 32 }}>
           <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--fg3)', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1730,7 +1712,7 @@ function Landing() {
       <footer style={{ position: 'relative', zIndex: 5, padding: '20px 48px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--fg2)' }}>
           <svg width="18" height="18" viewBox="0 0 28 28" fill="none"><circle cx="12" cy="12" r="8" stroke="#00f5d4" strokeWidth="2"/><line x1="18" y1="18" x2="25" y2="25" stroke="#00f5d4" strokeWidth="2.5" strokeLinecap="round"/></svg>
-          SearchLens v2.4
+          SearchLens
         </div>
         <p style={{ fontSize: 11, color: 'var(--fg3)' }}>Sort · Export · AI Query Intel · AI Rewriter · Drag&Drop · Languages · Entity Extraction · ATS Report</p>
       </footer>
