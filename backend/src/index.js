@@ -448,6 +448,7 @@ function parseResumeSections(text) {
     projects: /\b(projects|portfolio|notable projects|key projects)\b/i,
     certifications: /\b(certifications?|certificates?|licenses?|credentials|awards?)\b/i,
     contact: /\b(contact|personal info|phone|email|address|linkedin|github)\b/i,
+    languages: /\b(languages?|spoken languages?|language proficiency|multilingual)\b/i,
   };
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
   const sections = {};
@@ -555,7 +556,7 @@ collectPCMetricSample();
 // HEALTH
 // =============================================
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', geminiEnabled, features: { ner: true, expansion: true, hybrid: true, resumeAnalysis: true, anomalyDetection: true, iotSimulator: true, realPCMetrics: !!si, auth: true } });
+  res.json({ status: 'ok', geminiEnabled, version: '2.4', features: { ner: true, expansion: true, hybrid: true, resumeAnalysis: true, anomalyDetection: true, iotSimulator: true, realPCMetrics: !!si, auth: true, sortToggle: true, jsonExport: true, aiQueryIntelligence: true, aiTextCorrection: true, dragAndDrop: true, languagesSection: true, improvedSectionGen: true } });
 });
 
 // =============================================
@@ -681,6 +682,20 @@ Scores: Lexical=${((scores.lexical || 0) * 100).toFixed(0)}%, Semantic=${((score
 Return JSON: { strengths: [], weaknesses: [], keywordGaps: [], suggestions: [{type,priority,original,suggested,reason,impact}], improvedVersion: string, atsNote: string }`;
     const raw = await callGemini(prompt);
     res.json(JSON.parse(raw.replace(/```json\n?|\n?```/g, '').trim()));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/resume/generate-improved', authMiddleware, async (req, res) => {
+  try {
+    const { sectionName, sectionText, jobDescription, keywordGaps } = req.body;
+    const prompt = `You are an expert resume writer. Rewrite the following resume section to maximize ATS score and keyword match for the given job description. Return ONLY the improved section text, no JSON, no preamble.
+Section: ${sectionName.toUpperCase()}
+Original Content: "${sectionText}"
+Job Description: "${jobDescription}"
+Keyword Gaps to include: ${(keywordGaps || []).join(', ')}
+Rules: Keep the same format style. Naturally incorporate missing keywords. Make it compelling and truthful. Return ONLY the improved section text.`;
+    const improved = await callGemini(prompt);
+    res.json({ improvedText: improved.trim() });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -885,7 +900,7 @@ app.get('/api/iot/stream', authMiddleware, (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`SearchLens v2.3 backend running on port ${PORT}`);
+  console.log(`SearchLens v2.4 backend running on port ${PORT}`);
   console.log(`Gemini AI: ${geminiEnabled ? 'ENABLED' : 'DISABLED'}`);
   console.log(`Real PC Metrics: ${si ? 'ENABLED (systeminformation)' : 'FALLBACK (os module)'}`);
   console.log(`Auth: ENABLED (JWT)`);

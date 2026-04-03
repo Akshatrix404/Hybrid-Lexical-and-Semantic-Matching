@@ -164,7 +164,10 @@ const api = {
     return postForm('/resume/analyze', fd);
   },
   resumeAISuggestions: (sectionName: string, sectionText: string, jobDescription: string, sectionScores: Record<string, SectionScore>) => post('/resume/ai-suggestions', { sectionName, sectionText, jobDescription, sectionScores }),
+  resumeGenerateImproved: (sectionName: string, sectionText: string, jobDescription: string, keywordGaps: string[]) => post('/resume/generate-improved', { sectionName, sectionText, jobDescription, keywordGaps }),
   resumeATSReport: (resumeText: string, jobDescription: string, atsData: ATSData) => post('/resume/ats-report', { resumeText, jobDescription, atsData }),
+  aiSuggestCorrections: (text: string, corpusDocuments: string[], lexicalScore: number, semanticScore: number) => post('/ai/suggest-corrections', { text, corpusDocuments, lexicalScore, semanticScore }),
+  aiAnalyzeQuery: (query: string, corpusDocuments: string[]) => post('/ai/analyze-query', { query, corpusDocuments }),
   anomalyAnalyze: (metricsData: Record<string, number[]>, threshold?: number, useRealPC?: boolean) => post('/anomaly/analyze', { metricsData, threshold, useRealPC }),
   anomalyAIReport: (analysisResults: Record<string, MetricResult>, metricName: string) => post('/anomaly/ai-report', { analysisResults, metricName }),
   iotDevices: () => get('/iot/devices'),
@@ -333,7 +336,7 @@ function LoginPage() {
             <line x1="18" y1="18" x2="25" y2="25" stroke="#00f5d4" strokeWidth="2.5" strokeLinecap="round"/>
           </svg>
           <span style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 800, letterSpacing: '-0.02em' }}>SearchLens</span>
-          <span className="tag tag-cyan">v2.3</span>
+          <span className="tag tag-cyan">v2.4</span>
         </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
           <span className="tag tag-cyan" style={{ fontSize: 9 }}>Hybrid Search</span>
@@ -1012,6 +1015,13 @@ function SearchApp() {
   const [error, setError] = useState<string | null>(null);
   const [searchedQuery, setSearchedQuery] = useState('');
   const [serverStatus, setServerStatus] = useState<ServerStatus | null>(null);
+  const [sortBy, setSortBy] = useState<'hybrid' | 'lexical' | 'semantic'>('hybrid');
+  const [aiQueryReport, setAiQueryReport] = useState<any>(null);
+  const [loadingAIQuery, setLoadingAIQuery] = useState(false);
+  const [selectedResultForAI, setSelectedResultForAI] = useState<number | null>(null);
+  const [aiCorrections, setAiCorrections] = useState<Record<number, any>>({});
+  const [loadingCorrections, setLoadingCorrections] = useState<Set<number>>(new Set());
+  const [exportMsg, setExportMsg] = useState('');
 
   useEffect(() => { api.health().then(s => setServerStatus(s)).catch(() => setServerStatus({ status: 'offline', geminiEnabled: false, features: {} })); }, []);
 
@@ -1019,12 +1029,48 @@ function SearchApp() {
 
   const handleAnalyze = async () => {
     if (!query.trim() || !documents.length) return;
-    setLoading(true); setError(null); setResults(null);
+    setLoading(true); setError(null); setResults(null); setAiQueryReport(null); setAiCorrections({});
     try {
       const data = await api.analyze(query, documents, alpha);
       setResults(data.results); setMeta(data.meta); setSearchedQuery(query);
     } catch (e: any) { setError(e.message || 'Backend not reachable. Make sure backend is running on port 3001.'); }
     finally { setLoading(false); }
+  };
+
+  const sortedResults = results ? [...results].sort((a, b) => {
+    if (sortBy === 'lexical') return b.lexicalScore - a.lexicalScore;
+    if (sortBy === 'semantic') return b.semanticScore - a.semanticScore;
+    return b.hybridScore - a.hybridScore;
+  }) : null;
+
+  const handleExportJSON = () => {
+    if (!sortedResults) return;
+    const blob = new Blob([JSON.stringify({ query: searchedQuery, alpha, sortBy, meta, results: sortedResults }, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `searchlens-results-${Date.now()}.json`; a.click();
+    URL.revokeObjectURL(url);
+    setExportMsg('Exported!');
+    setTimeout(() => setExportMsg(''), 2000);
+  };
+
+  const handleAIQueryAnalysis = async () => {
+    if (!query.trim() || !documents.length) return;
+    setLoadingAIQuery(true);
+    try {
+      const data = await api.aiAnalyzeQuery(query, documents);
+      setAiQueryReport(data);
+    } catch (e: any) { setAiQueryReport({ error: e.message }); }
+    finally { setLoadingAIQuery(false); }
+  };
+
+  const handleAICorrections = async (result: SearchResult) => {
+    setLoadingCorrections(prev => new Set([...prev, result.id]));
+    try {
+      const data = await api.aiSuggestCorrections(result.text, documents, result.lexicalScore, result.semanticScore);
+      setAiCorrections(prev => ({ ...prev, [result.id]: data }));
+    } catch (e: any) { setAiCorrections(prev => ({ ...prev, [result.id]: { error: e.message } })); }
+    finally { setLoadingCorrections(prev => { const n = new Set(prev); n.delete(result.id); return n; }); }
   };
 
   return (
@@ -1059,7 +1105,37 @@ function SearchApp() {
           <button onClick={handleAnalyze} disabled={!query.trim() || !documents.length || loading} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', padding: 12, background: 'var(--cyan)', color: '#000', fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 13, borderRadius: 'var(--radius)', border: 'none', cursor: 'pointer' }}>
             {loading ? <><Spinner color="#000" /> Analyzing…</> : <>◈ Analyze Relevance</>}
           </button>
+          {serverStatus?.geminiEnabled && query.trim() && documents.length > 0 && (
+            <button onClick={handleAIQueryAnalysis} disabled={loadingAIQuery} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', padding: 10, background: 'rgba(255,179,71,0.08)', color: 'var(--amber)', border: '1px solid rgba(255,179,71,0.2)', fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 12, borderRadius: 'var(--radius)', cursor: 'pointer' }}>
+              {loadingAIQuery ? <><Spinner color="var(--amber)" size={12} /> Analyzing Query…</> : <>🤖 AI Query Intelligence</>}
+            </button>
+          )}
           {error && <div style={{ padding: '8px 12px', background: 'rgba(255,69,96,0.08)', border: '1px solid rgba(255,69,96,0.2)', borderRadius: 'var(--radius)', fontSize: 11, color: 'var(--red)' }}>⚠ {error}</div>}
+
+          {/* AI Query Intelligence Panel */}
+          {aiQueryReport && !aiQueryReport.error && (
+            <div style={{ padding: 14, background: 'rgba(255,179,71,0.05)', border: '1px solid rgba(255,179,71,0.15)', borderRadius: 'var(--radius)', animation: 'fadeIn 0.4s ease' }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--amber)', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>🤖 Query Intelligence</div>
+              {aiQueryReport.rewrittenQuery && (
+                <div style={{ marginBottom: 8 }}>
+                  <div style={{ fontSize: 10, color: 'var(--fg3)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Rewritten Query</div>
+                  <div style={{ fontSize: 12, color: 'var(--amber)', background: 'var(--bg3)', padding: '6px 10px', borderRadius: 4 }}>{aiQueryReport.rewrittenQuery}</div>
+                </div>
+              )}
+              {aiQueryReport.domainDetected && <div style={{ fontSize: 11, color: 'var(--fg2)', marginBottom: 6 }}>Domain: <span style={{ color: 'var(--cyan)' }}>{aiQueryReport.domainDetected}</span> · Strength: <span style={{ color: aiQueryReport.queryStrength === 'strong' ? 'var(--green)' : 'var(--amber)' }}>{aiQueryReport.queryStrength}</span></div>}
+              {aiQueryReport.searchTip && <div style={{ fontSize: 11, color: 'var(--fg3)', lineHeight: 1.5, marginBottom: 8 }}>💡 {aiQueryReport.searchTip}</div>}
+              {Array.isArray(aiQueryReport.alternativeQueries) && (
+                <div>
+                  <div style={{ fontSize: 10, color: 'var(--fg3)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Alternative Queries</div>
+                  {aiQueryReport.alternativeQueries.map((q: string, i: number) => (
+                    <div key={i} onClick={() => { setQuery(q); setAiQueryReport(null); }} style={{ fontSize: 11, color: 'var(--fg2)', padding: '4px 8px', background: 'var(--bg3)', borderRadius: 4, marginBottom: 4, cursor: 'pointer', border: '1px solid var(--border)' }}>
+                      → {q}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </aside>
         <main style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
           {!results && !loading && (
@@ -1070,25 +1146,76 @@ function SearchApp() {
             </div>
           )}
           {loading && <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 400, gap: 16 }}><div style={{ width: 48, height: 48, border: '2px solid var(--border)', borderTopColor: 'var(--cyan)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} /><p style={{ fontSize: 12, color: 'var(--cyan)' }}>Running BM25 + semantic scoring…</p></div>}
-          {results && (
+          {sortedResults && (
             <div>
-              <div style={{ marginBottom: 16 }}>
-                <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700 }}>Results for: <span style={{ color: 'var(--cyan)' }}>"{searchedQuery}"</span></div>
-                <div style={{ fontSize: 11, color: 'var(--fg3)', marginTop: 2 }}>{results.length} documents ranked by hybrid score</div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
+                <div>
+                  <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700 }}>Results for: <span style={{ color: 'var(--cyan)' }}>"{searchedQuery}"</span></div>
+                  <div style={{ fontSize: 11, color: 'var(--fg3)', marginTop: 2 }}>{sortedResults.length} documents · sorted by {sortBy}</div>
+                </div>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  {/* Sort toggle */}
+                  <div style={{ display: 'flex', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
+                    {(['hybrid', 'lexical', 'semantic'] as const).map(s => (
+                      <button key={s} onClick={() => setSortBy(s)}
+                        style={{ padding: '5px 10px', background: sortBy === s ? (s === 'hybrid' ? 'var(--bg3)' : s === 'lexical' ? 'rgba(0,245,212,0.12)' : 'rgba(255,179,71,0.12)') : 'transparent', color: sortBy === s ? (s === 'lexical' ? 'var(--cyan)' : s === 'semantic' ? 'var(--amber)' : 'var(--fg)') : 'var(--fg3)', fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 700, border: 'none', cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.05em', transition: 'all 0.15s' }}>
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                  {/* JSON Export */}
+                  <button onClick={handleExportJSON}
+                    style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 12px', background: exportMsg ? 'rgba(57,255,107,0.1)' : 'var(--bg3)', border: `1px solid ${exportMsg ? 'rgba(57,255,107,0.3)' : 'var(--border)'}`, color: exportMsg ? 'var(--green)' : 'var(--fg3)', fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 700, borderRadius: 'var(--radius)', cursor: 'pointer', transition: 'all 0.2s' }}>
+                    {exportMsg ? '✓ ' + exportMsg : '⤓ Export JSON'}
+                  </button>
+                </div>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                {results.map((r, rank) => (
+                {sortedResults.map((r, rank) => (
                   <div key={r.id} className="card" style={{ padding: 16, animation: 'fadeInUp 0.4s ease forwards', opacity: 0, animationDelay: `${rank * 60}ms`, position: 'relative', overflow: 'hidden' }}>
                     <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 3, background: rank === 0 ? 'var(--gold)' : rank === 1 ? 'var(--silver)' : rank === 2 ? 'var(--bronze)' : 'transparent' }} />
                     <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
                       <div style={{ minWidth: 26, height: 26, borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', background: rank === 0 ? 'rgba(255,215,0,0.15)' : 'var(--bg3)', border: '1px solid var(--border)', fontSize: 11, fontWeight: 700, color: rank === 0 ? 'var(--gold)' : 'var(--fg3)', flexShrink: 0 }}>#{rank + 1}</div>
-                      <div style={{ fontSize: 13, color: 'var(--fg)', lineHeight: 1.6 }}>{r.text}</div>
+                      <div style={{ fontSize: 13, color: 'var(--fg)', lineHeight: 1.6, flex: 1 }}>{r.text}</div>
+                      {serverStatus?.geminiEnabled && (
+                        <button onClick={() => { setSelectedResultForAI(r.id === selectedResultForAI ? null : r.id); if (!aiCorrections[r.id]) handleAICorrections(r); }}
+                          style={{ flexShrink: 0, padding: '4px 8px', background: selectedResultForAI === r.id ? 'rgba(255,179,71,0.15)' : 'rgba(255,179,71,0.06)', border: `1px solid rgba(255,179,71,${selectedResultForAI === r.id ? '0.4' : '0.15'})`, color: 'var(--amber)', fontSize: 10, fontFamily: 'var(--font-mono)', borderRadius: 4, cursor: 'pointer', height: 26, display: 'flex', alignItems: 'center', gap: 4 }}>
+                          {loadingCorrections.has(r.id) ? <Spinner size={10} color="var(--amber)" /> : '✏ AI Fix'}
+                        </button>
+                      )}
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                       <ScoreRow label="Lexical" score={r.lexicalScore} color="var(--cyan)" delay={rank * 60} />
                       <ScoreRow label="Semantic" score={r.semanticScore} color="var(--amber)" delay={rank * 60 + 80} />
                       <ScoreRow label="Hybrid" score={r.hybridScore} color="var(--fg)" bold delay={rank * 60 + 160} />
                     </div>
+                    {/* AI Correction Panel */}
+                    {selectedResultForAI === r.id && aiCorrections[r.id] && !aiCorrections[r.id].error && (
+                      <div style={{ marginTop: 14, padding: 14, background: 'rgba(255,179,71,0.04)', border: '1px solid rgba(255,179,71,0.15)', borderRadius: 'var(--radius)', animation: 'fadeIn 0.3s ease' }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--amber)', marginBottom: 10 }}>✏ AI Text Correction Suggestions</div>
+                        {aiCorrections[r.id].analysis && <div style={{ fontSize: 12, color: 'var(--fg2)', marginBottom: 10, lineHeight: 1.6 }}>{aiCorrections[r.id].analysis}</div>}
+                        {Array.isArray(aiCorrections[r.id].suggestions) && aiCorrections[r.id].suggestions.slice(0, 3).map((s: any, i: number) => (
+                          <div key={i} style={{ marginBottom: 8, padding: '8px 10px', background: 'var(--bg3)', borderRadius: 4 }}>
+                            <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 }}>
+                              <span className={`tag tag-${s.type === 'keyword' ? 'cyan' : s.type === 'clarity' ? 'amber' : 'gray'}`} style={{ fontSize: 9 }}>{s.type}</span>
+                              <span className={`tag tag-${s.confidence > 0.7 ? 'green' : 'amber'}`} style={{ fontSize: 9 }}>{Math.round(s.confidence * 100)}% conf</span>
+                            </div>
+                            <div style={{ fontSize: 11, color: 'var(--fg3)', marginBottom: 3 }}>"{s.original}"</div>
+                            <div style={{ fontSize: 11, color: 'var(--cyan)' }}>→ "{s.suggested}"</div>
+                            {s.reason && <div style={{ fontSize: 10, color: 'var(--fg3)', marginTop: 4 }}>{s.reason}</div>}
+                          </div>
+                        ))}
+                        {aiCorrections[r.id].improvedText && (
+                          <div style={{ marginTop: 8 }}>
+                            <div style={{ fontSize: 10, color: 'var(--fg3)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Improved Version</div>
+                            <div style={{ fontSize: 12, color: 'var(--green)', padding: '8px 10px', background: 'rgba(57,255,107,0.04)', border: '1px solid rgba(57,255,107,0.1)', borderRadius: 4, lineHeight: 1.6 }}>{aiCorrections[r.id].improvedText}</div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {selectedResultForAI === r.id && aiCorrections[r.id]?.error && (
+                      <div style={{ marginTop: 10, fontSize: 11, color: 'var(--red)', padding: '8px 12px', background: 'rgba(255,69,96,0.06)', borderRadius: 4 }}>⚠ {aiCorrections[r.id].error}</div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -1116,6 +1243,16 @@ function ResumeApp() {
   const [error, setError] = useState<string | null>(null);
   const [serverStatus, setServerStatus] = useState<ServerStatus | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [resumeEntities, setResumeEntities] = useState<Record<string, string[]> | null>(null);
+  const [jdEntities, setJdEntities] = useState<Record<string, string[]> | null>(null);
+  const [aiSuggestions, setAiSuggestions] = useState<Record<string, any>>({});
+  const [loadingSuggestions, setLoadingSuggestions] = useState<Set<string>>(new Set());
+  const [improvedSections, setImprovedSections] = useState<Record<string, string>>({});
+  const [loadingImproved, setLoadingImproved] = useState<Set<string>>(new Set());
+  const [atsReport, setAtsReport] = useState<any>(null);
+  const [loadingATSReport, setLoadingATSReport] = useState(false);
+  const [activeTab, setActiveTab] = useState<'scores' | 'entities' | 'ats-report'>('scores');
 
   useEffect(() => { api.health().then(s => setServerStatus(s)).catch(() => setServerStatus({ status: 'offline', geminiEnabled: false, features: {} })); }, []);
 
@@ -1126,13 +1263,52 @@ function ResumeApp() {
     finally { setExtracting(false); }
   };
 
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault(); setIsDragOver(false);
+    const f = e.dataTransfer.files?.[0];
+    if (f) handleFile(f);
+  };
+
   const handleAnalyze = async () => {
-    setLoading(true); setError(null);
+    setLoading(true); setError(null); setAiSuggestions({}); setImprovedSections({}); setAtsReport(null);
     try {
       const d = await api.resumeAnalyze(file, resumeText, sections, jobDescription);
       setSectionScores(d.sectionScores); setAtsData(d.atsData); setSections(d.sections || sections);
+      if (d.resumeEntities) setResumeEntities(d.resumeEntities);
+      if (d.jdEntities) setJdEntities(d.jdEntities);
+      setActiveTab('scores');
     } catch (e: any) { setError(e.message); }
     finally { setLoading(false); }
+  };
+
+  const handleAISuggestions = async (secName: string) => {
+    if (!sectionScores) return;
+    setLoadingSuggestions(prev => new Set([...prev, secName]));
+    try {
+      const data = await api.resumeAISuggestions(secName, sections[secName] || '', jobDescription, sectionScores);
+      setAiSuggestions(prev => ({ ...prev, [secName]: data }));
+    } catch (e: any) { setAiSuggestions(prev => ({ ...prev, [secName]: { error: e.message } })); }
+    finally { setLoadingSuggestions(prev => { const n = new Set(prev); n.delete(secName); return n; }); }
+  };
+
+  const handleGenerateImproved = async (secName: string) => {
+    setLoadingImproved(prev => new Set([...prev, secName]));
+    const gaps = atsData?.missingKeywords || [];
+    try {
+      const data = await api.resumeGenerateImproved(secName, sections[secName] || '', jobDescription, gaps);
+      setImprovedSections(prev => ({ ...prev, [secName]: data.improvedText }));
+    } catch (e: any) { setImprovedSections(prev => ({ ...prev, [secName]: 'Error: ' + e.message })); }
+    finally { setLoadingImproved(prev => { const n = new Set(prev); n.delete(secName); return n; }); }
+  };
+
+  const handleATSReport = async () => {
+    if (!atsData) return;
+    setLoadingATSReport(true);
+    try {
+      const data = await api.resumeATSReport(resumeText, jobDescription, atsData);
+      setAtsReport(data); setActiveTab('ats-report');
+    } catch (e: any) { setAtsReport({ error: e.message }); }
+    finally { setLoadingATSReport(false); }
   };
 
   const scoreColor = (v: number) => v >= 0.7 ? 'var(--green)' : v >= 0.4 ? 'var(--amber)' : 'var(--red)';
@@ -1153,16 +1329,23 @@ function ResumeApp() {
         <aside style={{ width: 320, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--bg2)', overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div>
             <label style={{ display: 'block', fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--fg3)', marginBottom: 8 }}>Upload Resume</label>
-            <div onClick={() => fileInputRef.current?.click()} style={{ padding: 20, border: `2px dashed var(--border)`, borderRadius: 'var(--radius)', textAlign: 'center', cursor: 'pointer' }}>
+            {/* Drag-and-drop zone */}
+            <div
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={e => { e.preventDefault(); setIsDragOver(true); }}
+              onDragLeave={() => setIsDragOver(false)}
+              onDrop={handleDrop}
+              style={{ padding: 20, border: `2px dashed ${isDragOver ? 'var(--cyan)' : 'var(--border)'}`, background: isDragOver ? 'rgba(0,245,212,0.04)' : 'transparent', borderRadius: 'var(--radius)', textAlign: 'center', cursor: 'pointer', transition: 'all 0.2s' }}>
               {extracting ? <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}><Spinner /><span style={{ fontSize: 12, color: 'var(--fg3)' }}>Extracting…</span></div>
+                : isDragOver ? <div><div style={{ fontSize: 28, marginBottom: 6 }}>📂</div><div style={{ fontSize: 12, color: 'var(--cyan)' }}>Drop to upload</div></div>
                 : file ? <div><div style={{ fontSize: 20, marginBottom: 4 }}>📄</div><div style={{ fontSize: 12, color: 'var(--cyan)' }}>{file.name}</div><div style={{ fontSize: 10, color: 'var(--fg3)', marginTop: 2 }}>{resumeText ? resumeText.split(/\s+/).filter(Boolean).length + ' words' : ''}</div></div>
-                : <div><div style={{ fontSize: 28, marginBottom: 6 }}>📎</div><div style={{ fontSize: 12, color: 'var(--fg2)' }}>Drop resume or click</div><div style={{ fontSize: 10, color: 'var(--fg3)', marginTop: 2 }}>PDF · DOCX · XLSX · CSV · TXT</div></div>}
+                : <div><div style={{ fontSize: 28, marginBottom: 6 }}>📎</div><div style={{ fontSize: 12, color: 'var(--fg2)' }}>Drag &amp; drop or click to upload</div><div style={{ fontSize: 10, color: 'var(--fg3)', marginTop: 2 }}>PDF · DOCX · XLSX · CSV · JSON · TXT</div></div>}
             </div>
             <input ref={fileInputRef} type="file" accept=".pdf,.docx,.doc,.xlsx,.xls,.csv,.json,.txt" onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }} style={{ display: 'none' }} />
           </div>
           <div>
             <label style={{ display: 'block', fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--fg3)', marginBottom: 6 }}>Or Paste Resume Text</label>
-            <textarea value={resumeText} onChange={e => { setResumeText(e.target.value); setSectionScores(null); setAtsData(null); }} placeholder="Paste resume text…" style={{ width: '100%', minHeight: 100, padding: '8px 10px', resize: 'vertical', borderRadius: 'var(--radius)' }} />
+            <textarea value={resumeText} onChange={e => { setResumeText(e.target.value); setSectionScores(null); setAtsData(null); setResumeEntities(null); }} placeholder="Paste resume text…" style={{ width: '100%', minHeight: 100, padding: '8px 10px', resize: 'vertical', borderRadius: 'var(--radius)' }} />
           </div>
           <div>
             <label style={{ display: 'block', fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--fg3)', marginBottom: 6 }}>Job Description</label>
@@ -1172,23 +1355,40 @@ function ResumeApp() {
             {loading ? <><Spinner color="#000" /> Analyzing…</> : <>◈ Analyze Resume vs JD</>}
           </button>
           {error && <div style={{ padding: '8px 12px', background: 'rgba(255,69,96,0.08)', border: '1px solid rgba(255,69,96,0.2)', borderRadius: 'var(--radius)', fontSize: 11, color: 'var(--red)' }}>⚠ {error}</div>}
-          {Object.keys(sections).length > 0 && <div><div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--fg3)', marginBottom: 6 }}>Detected Sections</div><div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>{Object.keys(sections).map(s => <span key={s} className="tag tag-gray" style={{ textTransform: 'capitalize' }}>{s}</span>)}</div></div>}
+          {Object.keys(sections).length > 0 && (
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--fg3)', marginBottom: 6 }}>Detected Sections</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                {Object.keys(sections).map(s => <span key={s} className="tag tag-gray" style={{ textTransform: 'capitalize' }}>{s}</span>)}
+              </div>
+            </div>
+          )}
         </aside>
         <main style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
           {!sectionScores && !atsData && (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 400, gap: 16, textAlign: 'center' }}>
               <div className="animate-float" style={{ fontSize: 60 }}>📋</div>
               <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700 }}>Resume ATS Analyzer</h3>
-              <p style={{ fontSize: 13, maxWidth: 400, lineHeight: 1.7, color: 'var(--fg2)' }}>Upload your resume and paste a job description to get ATS compatibility score, section-wise analysis, and keyword gap report.</p>
+              <p style={{ fontSize: 13, maxWidth: 460, lineHeight: 1.7, color: 'var(--fg2)' }}>Upload your resume (or paste text) and a job description to get ATS compatibility score, section-wise analysis, entity extraction, keyword gap analysis, and AI-powered improvement suggestions.</p>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+                {['Drag & Drop', 'Languages Section', 'Entity Extraction', 'AI Section Rewriter', 'ATS Report'].map(f => <span key={f} className="tag tag-magenta" style={{ fontSize: 9 }}>{f}</span>)}
+              </div>
             </div>
           )}
           {atsData && (
             <div style={{ animation: 'fadeIn 0.4s ease' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 20, marginBottom: 24 }}>
+              {/* ATS Score Header */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 20, marginBottom: 20 }}>
                 <div className="card" style={{ padding: 24, textAlign: 'center' }}>
                   <div style={{ fontSize: 64, fontWeight: 800, color: atsData.atsScore >= 70 ? 'var(--green)' : atsData.atsScore >= 50 ? 'var(--amber)' : 'var(--red)', fontFamily: 'var(--font-display)', letterSpacing: '-0.04em', lineHeight: 1 }}>{atsData.atsScore}</div>
                   <div style={{ fontSize: 11, color: 'var(--fg3)', marginTop: 4 }}>ATS Score</div>
                   <span className={`tag tag-${atsData.atsScore >= 70 ? 'green' : atsData.atsScore >= 50 ? 'amber' : 'red'}`} style={{ marginTop: 10, display: 'inline-block' }}>{atsData.atsScore >= 70 ? 'Excellent' : atsData.atsScore >= 50 ? 'Good' : 'Needs Work'}</span>
+                  {serverStatus?.geminiEnabled && (
+                    <button onClick={handleATSReport} disabled={loadingATSReport}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%', marginTop: 12, padding: '8px', background: 'rgba(255,110,199,0.1)', border: '1px solid rgba(255,110,199,0.2)', color: 'var(--magenta)', fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 700, borderRadius: 'var(--radius)', cursor: 'pointer' }}>
+                      {loadingATSReport ? <><Spinner size={10} color="var(--magenta)" /> Generating…</> : '🤖 Full AI ATS Report'}
+                    </button>
+                  )}
                 </div>
                 <div className="card" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 10, justifyContent: 'center' }}>
                   <ScoreRow label="Lexical" score={atsData.lexicalScore / 100} color="var(--cyan)" />
@@ -1197,7 +1397,9 @@ function ResumeApp() {
                   <ScoreRow label="Keyword" score={atsData.keywordScore / 100} color="var(--magenta)" />
                 </div>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
+
+              {/* Keyword gap */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
                 <div className="card" style={{ padding: 16 }}>
                   <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--green)', marginBottom: 10 }}>✓ Matched ({atsData.totalMatched})</div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>{atsData.matchedKeywords.slice(0, 20).map((kw, i) => <span key={i} className="tag tag-green" style={{ fontSize: 10 }}>{kw}</span>)}</div>
@@ -1207,24 +1409,152 @@ function ResumeApp() {
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>{atsData.missingKeywords.map((kw, i) => <span key={i} className="tag tag-red" style={{ fontSize: 10 }}>{kw}</span>)}</div>
                 </div>
               </div>
-              {sectionScores && (
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--fg)', marginBottom: 14 }}>Section-wise Scores</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
-                    {Object.entries(sectionScores).map(([sec, s]) => (
-                      <div key={sec} className="card" style={{ padding: 14 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
-                          <span style={{ fontSize: 12, fontWeight: 700, textTransform: 'capitalize', color: 'var(--fg)' }}>{sec}</span>
+
+              {/* Tab bar */}
+              <div style={{ display: 'flex', gap: 0, background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden', marginBottom: 20 }}>
+                {([['scores', '📊 Section Scores'], ['entities', '🧬 Entity Extraction'], ['ats-report', '🤖 AI ATS Report']] as const).map(([id, label]) => (
+                  <button key={id} onClick={() => setActiveTab(id)}
+                    style={{ flex: 1, padding: '9px', background: activeTab === id ? 'var(--bg3)' : 'transparent', color: activeTab === id ? 'var(--fg)' : 'var(--fg3)', fontFamily: 'var(--font-mono)', fontWeight: activeTab === id ? 700 : 400, fontSize: 11, border: 'none', cursor: 'pointer', borderRight: id !== 'ats-report' ? '1px solid var(--border)' : 'none', transition: 'all 0.15s' }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Section Scores tab */}
+              {activeTab === 'scores' && sectionScores && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
+                  {Object.entries(sectionScores).map(([sec, s]) => (
+                    <div key={sec} className="card" style={{ padding: 16 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, textTransform: 'capitalize', color: 'var(--fg)' }}>{sec}</span>
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                           <span style={{ fontSize: 11, fontWeight: 700, color: scoreColor(s.hybrid) }}>{(s.hybrid * 100).toFixed(0)}%</span>
-                        </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                          <ScoreRow label="Lexical" score={s.lexical} color="var(--cyan)" />
-                          <ScoreRow label="Semantic" score={s.semantic} color="var(--amber)" />
-                          <ScoreRow label="Hybrid" score={s.hybrid} color={scoreColor(s.hybrid)} bold />
+                          <span className="tag tag-gray" style={{ fontSize: 9 }}>{s.wordCount}w</span>
                         </div>
                       </div>
-                    ))}
-                  </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 12 }}>
+                        <ScoreRow label="Lexical" score={s.lexical} color="var(--cyan)" />
+                        <ScoreRow label="Semantic" score={s.semantic} color="var(--amber)" />
+                        <ScoreRow label="Hybrid" score={s.hybrid} color={scoreColor(s.hybrid)} bold />
+                      </div>
+                      {serverStatus?.geminiEnabled && (
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button onClick={() => handleAISuggestions(sec)} disabled={loadingSuggestions.has(sec)}
+                            style={{ flex: 1, padding: '5px 8px', background: 'rgba(255,110,199,0.07)', border: '1px solid rgba(255,110,199,0.2)', color: 'var(--magenta)', fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 700, borderRadius: 4, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                            {loadingSuggestions.has(sec) ? <Spinner size={10} color="var(--magenta)" /> : '✦ AI Suggestions'}
+                          </button>
+                          <button onClick={() => handleGenerateImproved(sec)} disabled={loadingImproved.has(sec)}
+                            style={{ flex: 1, padding: '5px 8px', background: 'rgba(57,255,107,0.07)', border: '1px solid rgba(57,255,107,0.2)', color: 'var(--green)', fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 700, borderRadius: 4, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                            {loadingImproved.has(sec) ? <Spinner size={10} color="var(--green)" /> : '✍ Rewrite'}
+                          </button>
+                        </div>
+                      )}
+                      {/* AI Suggestions */}
+                      {aiSuggestions[sec] && !aiSuggestions[sec].error && (
+                        <div style={{ marginTop: 12, padding: 12, background: 'rgba(255,110,199,0.04)', border: '1px solid rgba(255,110,199,0.12)', borderRadius: 4, animation: 'fadeIn 0.3s ease' }}>
+                          {Array.isArray(aiSuggestions[sec].weaknesses) && aiSuggestions[sec].weaknesses.length > 0 && (
+                            <div style={{ marginBottom: 8 }}>
+                              <div style={{ fontSize: 10, color: 'var(--fg3)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Weaknesses</div>
+                              {aiSuggestions[sec].weaknesses.slice(0, 2).map((w: string, i: number) => <div key={i} style={{ fontSize: 11, color: 'var(--red)', marginBottom: 2 }}>• {w}</div>)}
+                            </div>
+                          )}
+                          {Array.isArray(aiSuggestions[sec].suggestions) && aiSuggestions[sec].suggestions.slice(0, 2).map((sg: any, i: number) => (
+                            <div key={i} style={{ marginBottom: 6, padding: '6px 8px', background: 'var(--bg3)', borderRadius: 4 }}>
+                              <div style={{ fontSize: 10, color: 'var(--magenta)', fontWeight: 700, marginBottom: 3 }}>{sg.type} · {sg.priority}</div>
+                              <div style={{ fontSize: 11, color: 'var(--fg2)', lineHeight: 1.5 }}>{sg.reason}</div>
+                            </div>
+                          ))}
+                          {aiSuggestions[sec].atsNote && <div style={{ fontSize: 11, color: 'var(--amber)', marginTop: 8, padding: '5px 8px', background: 'rgba(255,179,71,0.07)', borderRadius: 4 }}>💡 {aiSuggestions[sec].atsNote}</div>}
+                        </div>
+                      )}
+                      {/* AI Rewritten Section */}
+                      {improvedSections[sec] && (
+                        <div style={{ marginTop: 10, padding: 12, background: 'rgba(57,255,107,0.04)', border: '1px solid rgba(57,255,107,0.15)', borderRadius: 4, animation: 'fadeIn 0.3s ease' }}>
+                          <div style={{ fontSize: 10, color: 'var(--green)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6, fontWeight: 700 }}>✍ AI Rewritten Version</div>
+                          <div style={{ fontSize: 12, color: 'var(--fg)', lineHeight: 1.7, whiteSpace: 'pre-wrap', maxHeight: 200, overflowY: 'auto' }}>{improvedSections[sec]}</div>
+                          <button onClick={() => navigator.clipboard.writeText(improvedSections[sec])}
+                            style={{ marginTop: 8, padding: '4px 10px', background: 'rgba(57,255,107,0.1)', border: '1px solid rgba(57,255,107,0.2)', color: 'var(--green)', fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 700, borderRadius: 4, cursor: 'pointer' }}>
+                            ⎘ Copy
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Entity Extraction tab */}
+              {activeTab === 'entities' && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+                  {[{ label: '📄 Resume Entities', data: resumeEntities, color: 'var(--cyan)' }, { label: '💼 JD Entities', data: jdEntities, color: 'var(--magenta)' }].map(({ label, data, color }) => (
+                    <div key={label} className="card" style={{ padding: 20 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color, marginBottom: 16 }}>{label}</div>
+                      {data ? Object.entries(data).filter(([, vals]) => (vals as string[]).length > 0).map(([cat, vals]) => (
+                        <div key={cat} style={{ marginBottom: 14 }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--fg3)', marginBottom: 6 }}>{cat}</div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                            {(vals as string[]).map((v, i) => <span key={i} className="tag tag-gray" style={{ fontSize: 10 }}>{v}</span>)}
+                          </div>
+                        </div>
+                      )) : <div style={{ fontSize: 12, color: 'var(--fg3)' }}>Run analysis to see entities</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* AI ATS Report tab */}
+              {activeTab === 'ats-report' && (
+                <div>
+                  {!atsReport && (
+                    <div style={{ textAlign: 'center', padding: 40 }}>
+                      <div style={{ fontSize: 40, marginBottom: 12 }}>🤖</div>
+                      <div style={{ fontSize: 13, color: 'var(--fg2)', marginBottom: 16 }}>Click "Full AI ATS Report" in the score panel to generate a comprehensive AI analysis.</div>
+                      {!serverStatus?.geminiEnabled && <div style={{ fontSize: 12, color: 'var(--amber)' }}>⚠ Gemini AI not configured. Add GEMINI_API_KEY to backend .env</div>}
+                    </div>
+                  )}
+                  {atsReport?.error && <div style={{ padding: '12px 16px', background: 'rgba(255,69,96,0.08)', border: '1px solid rgba(255,69,96,0.2)', borderRadius: 'var(--radius)', fontSize: 12, color: 'var(--red)' }}>⚠ {atsReport.error}</div>}
+                  {atsReport && !atsReport.error && (
+                    <div style={{ animation: 'fadeIn 0.4s ease' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20, padding: '16px 20px', background: 'rgba(255,110,199,0.05)', border: '1px solid rgba(255,110,199,0.15)', borderRadius: 'var(--radius)' }}>
+                        <span style={{ fontSize: 28 }}>🤖</span>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 700, color: 'var(--magenta)', marginBottom: 4 }}>AI ATS Compatibility Report</div>
+                          <div style={{ fontSize: 12, color: 'var(--fg2)', lineHeight: 1.6 }}>{atsReport.verdict}</div>
+                        </div>
+                        <span className={`tag tag-${atsReport.passLikelihood === 'high' ? 'green' : atsReport.passLikelihood === 'medium' ? 'amber' : 'red'}`} style={{ fontSize: 12 }}>{atsReport.passLikelihood} pass likelihood</span>
+                      </div>
+                      {Array.isArray(atsReport.criticalIssues) && atsReport.criticalIssues.length > 0 && (
+                        <div className="card" style={{ padding: 16, marginBottom: 14 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--red)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10 }}>⚠ Critical Issues</div>
+                          {atsReport.criticalIssues.map((issue: string, i: number) => <div key={i} style={{ fontSize: 12, color: 'var(--fg2)', marginBottom: 5, paddingLeft: 12, borderLeft: '2px solid var(--red)' }}>{issue}</div>)}
+                        </div>
+                      )}
+                      {Array.isArray(atsReport.quickWins) && atsReport.quickWins.length > 0 && (
+                        <div className="card" style={{ padding: 16, marginBottom: 14 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--green)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10 }}>✓ Quick Wins</div>
+                          {atsReport.quickWins.map((win: string, i: number) => <div key={i} style={{ fontSize: 12, color: 'var(--fg2)', marginBottom: 5, paddingLeft: 12, borderLeft: '2px solid var(--green)' }}>{win}</div>)}
+                        </div>
+                      )}
+                      {atsReport.keywordStrategy && (
+                        <div className="card" style={{ padding: 16, marginBottom: 14 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--amber)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>🔑 Keyword Strategy</div>
+                          <div style={{ fontSize: 12, color: 'var(--fg2)', lineHeight: 1.7 }}>{atsReport.keywordStrategy}</div>
+                        </div>
+                      )}
+                      {Array.isArray(atsReport.formattingAdvice) && atsReport.formattingAdvice.length > 0 && (
+                        <div className="card" style={{ padding: 16, marginBottom: 14 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--blue)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10 }}>📐 Formatting Advice</div>
+                          {atsReport.formattingAdvice.map((a: string, i: number) => <div key={i} style={{ fontSize: 12, color: 'var(--fg2)', marginBottom: 5, paddingLeft: 12, borderLeft: '2px solid var(--blue)' }}>{a}</div>)}
+                        </div>
+                      )}
+                      {atsReport.overallRecommendation && (
+                        <div className="card" style={{ padding: 16, borderColor: 'rgba(255,110,199,0.2)' }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--magenta)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>💬 Overall Recommendation</div>
+                          <div style={{ fontSize: 13, color: 'var(--fg)', lineHeight: 1.7 }}>{atsReport.overallRecommendation}</div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1239,8 +1569,8 @@ function ResumeApp() {
 // LANDING PAGE
 // =============================================
 const FEATURES = [
-  { id: 'search', icon: '◈', title: 'Hybrid Search Engine', tag: 'NLP · BM25', color: 'cyan', tagClass: 'tag-cyan', desc: 'BM25 lexical + n-gram semantic scoring with adjustable alpha blend, named entity recognition, and query expansion.', path: '/app' },
-  { id: 'resume', icon: '📋', title: 'Resume ATS Scorer', tag: 'NLP · IR', color: 'magenta', tagClass: 'tag-magenta', desc: 'Upload any resume format (PDF, DOCX, XLSX). Get section-wise ATS scores and keyword gap analysis against job descriptions.', path: '/resume' },
+  { id: 'search', icon: '◈', title: 'Hybrid Search Engine', tag: 'NLP · BM25 · AI', color: 'cyan', tagClass: 'tag-cyan', desc: 'BM25 lexical + n-gram semantic scoring with adjustable alpha blend, sort toggle (hybrid/lexical/semantic), JSON export, AI query intelligence & text correction suggestions.', path: '/app' },
+  { id: 'resume', icon: '📋', title: 'Resume ATS Scorer', tag: 'NLP · IR · AI', color: 'magenta', tagClass: 'tag-magenta', desc: 'Drag & drop upload (PDF, DOCX, XLSX, CSV, JSON, TXT). Section-wise scores, Languages section, entity extraction, AI section rewriter, and full AI ATS compatibility report.', path: '/resume' },
   { id: 'anomaly', icon: '📊', title: 'Anomaly Detection', tag: 'ML · Real PC', color: 'blue', tagClass: 'tag-blue', desc: 'Z-score algorithm detects anomalies in your real PC metrics (CPU, Memory, Network) or manual cloud metric inputs.', path: '/anomaly' },
   { id: 'iot', icon: '📡', title: 'IoT Device Fleet', tag: 'IoT · Real PC', color: 'green', tagClass: 'tag-green', desc: 'Your real PC hardware is the first device! Live CPU, memory, temperature stream alongside 5 simulated cloud devices.', path: '/iot' },
 ];
@@ -1263,7 +1593,7 @@ function Landing() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <svg width="26" height="26" viewBox="0 0 28 28" fill="none"><circle cx="12" cy="12" r="8" stroke="#00f5d4" strokeWidth="2"/><line x1="18" y1="18" x2="25" y2="25" stroke="#00f5d4" strokeWidth="2.5" strokeLinecap="round"/><circle cx="12" cy="12" r="3" fill="rgba(0,245,212,0.3)"/></svg>
           <span style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 800, letterSpacing: '-0.02em' }}>SearchLens</span>
-          <span className="tag tag-cyan">v2.3</span>
+          <span className="tag tag-cyan">v2.4</span>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           {FEATURES.map(f => (
@@ -1303,20 +1633,77 @@ function Landing() {
           </div>
         </div>
 
-        {/* New v2.3 callout */}
+        {/* New v2.4 callout */}
         <div style={{ background: 'rgba(0,245,212,0.04)', border: '1px solid rgba(0,245,212,0.15)', borderRadius: 10, padding: '20px 28px', marginBottom: 32, display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
-          <div style={{ fontSize: 32 }}>💻</div>
+          <div style={{ fontSize: 32 }}>🚀</div>
           <div style={{ flex: 1 }}>
-            <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700, color: 'var(--cyan)', marginBottom: 4 }}>NEW in v2.3 — Real PC Integration</div>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700, color: 'var(--cyan)', marginBottom: 4 }}>NEW in v2.4 — Full Feature Suite</div>
             <div style={{ fontSize: 13, color: 'var(--fg2)', lineHeight: 1.6 }}>
-              Your machine's CPU, memory, temperature, disk, and network are now piped directly into the platform via <code style={{ color: 'var(--cyan)', background: 'var(--bg3)', padding: '1px 5px', borderRadius: 3 }}>systeminformation</code>. The IoT fleet shows your real hardware as "Host PC". Anomaly detection learns from your actual usage patterns.
+              Search now has <strong style={{ color: 'var(--cyan)' }}>sort toggles</strong>, <strong style={{ color: 'var(--cyan)' }}>JSON export</strong>, <strong style={{ color: 'var(--amber)' }}>AI query intelligence</strong>, and <strong style={{ color: 'var(--amber)' }}>AI text correction</strong>. Resume analyzer adds <strong style={{ color: 'var(--magenta)' }}>drag & drop</strong>, <strong style={{ color: 'var(--magenta)' }}>Languages section</strong>, <strong style={{ color: 'var(--magenta)' }}>entity extraction UI</strong>, <strong style={{ color: 'var(--magenta)' }}>AI section rewriter</strong>, and a full <strong style={{ color: 'var(--magenta)' }}>AI ATS report</strong>.
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <span className="tag tag-cyan">Real CPU %</span>
-            <span className="tag tag-amber">Live Memory</span>
-            <span className="tag tag-green">Network I/O</span>
-            <span className="tag tag-blue">Auth System</span>
+            <span className="tag tag-cyan">Sort Toggle</span>
+            <span className="tag tag-cyan">JSON Export</span>
+            <span className="tag tag-amber">AI Query Intel</span>
+            <span className="tag tag-magenta">AI Rewriter</span>
+            <span className="tag tag-green">Drag & Drop</span>
+          </div>
+        </div>
+
+        {/* Live Animated Demo */}
+        <div style={{ marginBottom: 32 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--fg3)', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--green)', animation: 'pulse 1.5s infinite', display: 'inline-block' }} />
+            Live Feature Preview
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12 }}>
+            {/* Demo: Search sort */}
+            <div className="card" style={{ padding: 16, borderColor: 'rgba(0,245,212,0.15)' }}>
+              <div style={{ fontSize: 10, color: 'var(--cyan)', fontWeight: 700, marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.1em' }}>◈ Sort Results</div>
+              <div style={{ display: 'flex', background: 'var(--bg3)', borderRadius: 4, overflow: 'hidden', marginBottom: 10 }}>
+                {['Hybrid', 'Lexical', 'Semantic'].map((s, i) => (
+                  <div key={s} style={{ flex: 1, padding: '4px', textAlign: 'center', fontSize: 9, fontFamily: 'var(--font-mono)', background: i === 0 ? 'rgba(0,245,212,0.12)' : 'transparent', color: i === 0 ? 'var(--cyan)' : 'var(--fg3)', fontWeight: i === 0 ? 700 : 400 }}>{s}</div>
+                ))}
+              </div>
+              {[85, 62, 44].map((v, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
+                  <span style={{ fontSize: 9, color: 'var(--fg3)', minWidth: 14 }}>#{i+1}</span>
+                  <div style={{ flex: 1, height: 3, background: 'var(--border)', borderRadius: 2 }}><div style={{ width: `${v}%`, height: '100%', background: 'var(--cyan)', borderRadius: 2 }} /></div>
+                  <span style={{ fontSize: 9, color: 'var(--cyan)', minWidth: 24 }}>{v}%</span>
+                </div>
+              ))}
+              <div style={{ marginTop: 8, display: 'flex', gap: 5 }}>
+                <span style={{ fontSize: 9, padding: '3px 7px', background: 'rgba(0,245,212,0.08)', border: '1px solid rgba(0,245,212,0.2)', color: 'var(--cyan)', borderRadius: 3, fontFamily: 'var(--font-mono)' }}>⤓ Export JSON</span>
+                <span style={{ fontSize: 9, padding: '3px 7px', background: 'rgba(255,179,71,0.08)', border: '1px solid rgba(255,179,71,0.2)', color: 'var(--amber)', borderRadius: 3, fontFamily: 'var(--font-mono)' }}>🤖 AI Fix</span>
+              </div>
+            </div>
+            {/* Demo: AI Query Intelligence */}
+            <div className="card" style={{ padding: 16, borderColor: 'rgba(255,179,71,0.15)' }}>
+              <div style={{ fontSize: 10, color: 'var(--amber)', fontWeight: 700, marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.1em' }}>🤖 AI Query Intelligence</div>
+              <div style={{ fontSize: 11, color: 'var(--fg3)', marginBottom: 6 }}>Query: <span style={{ color: 'var(--fg)' }}>"ml engineer jobs"</span></div>
+              <div style={{ padding: '6px 10px', background: 'var(--bg3)', borderRadius: 4, marginBottom: 6 }}>
+                <div style={{ fontSize: 9, color: 'var(--fg3)', marginBottom: 3 }}>Rewritten →</div>
+                <div style={{ fontSize: 11, color: 'var(--amber)' }}>"machine learning engineer positions remote"</div>
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--fg3)', marginBottom: 4 }}>Domain: <span style={{ color: 'var(--cyan)' }}>Recruitment</span> · Strength: <span style={{ color: 'var(--green)' }}>Strong</span></div>
+              <div style={{ fontSize: 10, color: 'var(--fg3)', background: 'rgba(255,179,71,0.06)', padding: '5px 8px', borderRadius: 4 }}>💡 Add years of experience for better results</div>
+            </div>
+            {/* Demo: Resume Drag Drop + Entity */}
+            <div className="card" style={{ padding: 16, borderColor: 'rgba(255,110,199,0.15)' }}>
+              <div style={{ fontSize: 10, color: 'var(--magenta)', fontWeight: 700, marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.1em' }}>📋 Resume Features</div>
+              <div style={{ padding: '8px 10px', border: '2px dashed rgba(255,110,199,0.3)', borderRadius: 4, textAlign: 'center', marginBottom: 10, fontSize: 11, color: 'var(--fg3)' }}>📎 Drag & Drop Resume Here</div>
+              <div style={{ fontSize: 10, color: 'var(--fg3)', marginBottom: 5 }}>Detected Sections:</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 }}>
+                {['Summary', 'Experience', 'Skills', 'Languages', 'Certifications'].map(s => (
+                  <span key={s} style={{ fontSize: 9, padding: '2px 6px', background: 'rgba(255,110,199,0.08)', border: '1px solid rgba(255,110,199,0.2)', color: 'var(--magenta)', borderRadius: 3, fontFamily: 'var(--font-mono)' }}>{s}</span>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 4 }}>
+                <span style={{ fontSize: 9, padding: '3px 7px', background: 'rgba(255,110,199,0.08)', border: '1px solid rgba(255,110,199,0.2)', color: 'var(--magenta)', borderRadius: 3, fontFamily: 'var(--font-mono)' }}>✦ AI Suggestions</span>
+                <span style={{ fontSize: 9, padding: '3px 7px', background: 'rgba(57,255,107,0.08)', border: '1px solid rgba(57,255,107,0.2)', color: 'var(--green)', borderRadius: 3, fontFamily: 'var(--font-mono)' }}>✍ Rewrite</span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1343,9 +1730,9 @@ function Landing() {
       <footer style={{ position: 'relative', zIndex: 5, padding: '20px 48px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--fg2)' }}>
           <svg width="18" height="18" viewBox="0 0 28 28" fill="none"><circle cx="12" cy="12" r="8" stroke="#00f5d4" strokeWidth="2"/><line x1="18" y1="18" x2="25" y2="25" stroke="#00f5d4" strokeWidth="2.5" strokeLinecap="round"/></svg>
-          SearchLens v2.3
+          SearchLens v2.4
         </div>
-        <p style={{ fontSize: 11, color: 'var(--fg3)' }}>Real PC Metrics · NLP Search · ATS Resume · ML Anomaly · IoT Fleet</p>
+        <p style={{ fontSize: 11, color: 'var(--fg3)' }}>Sort · Export · AI Query Intel · AI Rewriter · Drag&Drop · Languages · Entity Extraction · ATS Report</p>
       </footer>
     </div>
   );
