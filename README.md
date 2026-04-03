@@ -1,6 +1,6 @@
-# SearchLens v2.4
+# SearchLens 
 
-## What's New in v2.4
+## What's New 
 
 ### Search Engine (`/app`) — New Features
 - **Results Sort Toggle** — switch between Hybrid / Lexical / Semantic sorting
