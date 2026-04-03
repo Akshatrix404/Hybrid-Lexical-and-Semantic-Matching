@@ -40,14 +40,14 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const login = async (email: string, password: string) => {
-    const res = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) });
+    const res = await fetch(`${BASE}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Login failed');
     saveAuth(data.token, data.user);
   };
 
   const register = async (email: string, name: string, password: string) => {
-    const res = await fetch('/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, name, password }) });
+    const res = await fetch(`${BASE}/auth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, name, password }) });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Registration failed');
     saveAuth(data.token, data.user);
@@ -120,7 +120,7 @@ a { color: var(--cyan); text-decoration: none; }
 // =============================================
 // API CLIENT
 // =============================================
-const BASE = '/api';
+const BASE = 'http://3.111.94.205:3001/api';
 
 function getToken() { return localStorage.getItem('sl_token'); }
 
@@ -148,7 +148,7 @@ async function get(path: string) {
 }
 
 const api = {
-  health: () => fetch('/api/health').then(r => r.json()),
+  health: () => fetch(`${BASE}/health`).then(r => r.json()),
   login: (email: string, password: string) => post('/auth/login', { email, password }),
   register: (email: string, name: string, password: string) => post('/auth/register', { email, name, password }),
   pcMetrics: () => get('/pc/metrics'),
