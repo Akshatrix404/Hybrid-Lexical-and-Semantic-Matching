@@ -1,6 +1,5 @@
 import express from 'express';
 import cors from 'cors';
-import { sendAlert } from "../snsAlert.js";
 import multer from 'multer';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -8,15 +7,16 @@ import os from 'os';
 import { fileURLToPath } from 'url';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { sendAlert } from "../snsAlert.js";
 
+app.get("/api/test-alert", async (req, res) => {
+  await sendAlert("🚨 Test alert from SearchLens backend!");
+  res.json({ message: "Alert sent successfully" });
+});
 dotenv.config();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
-app.get("/api/test-alert", async (req, res) => {
-  await sendAlert("🚨 Test alert from SearchLens backend!");
-  res.json({ message: "SNS alert sent successfully" });
-});
 const PORT = process.env.PORT || 3001;
 const JWT_SECRET = process.env.JWT_SECRET || 'searchlens_dev_secret_2024';
 
